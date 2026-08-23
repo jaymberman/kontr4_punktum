@@ -21,7 +21,7 @@ const CLEF_CHAR: Record<ClefType, string> = {
  * feature lands on its target staff line.
  */
 const CLEF_METRICS: Record<ClefType, { sizeInLines: number; nudge: number }> = {
-  treble: { sizeInLines: 5.73, nudge: -0.92 },
+  treble: { sizeInLines: 4.3, nudge: -0.69 },
   bass: { sizeInLines: 4.04, nudge: 0.61 },
   alto: { sizeInLines: 3.87, nudge: 0.02 },
   tenor: { sizeInLines: 3.87, nudge: 0.02 },

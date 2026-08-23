@@ -1,7 +1,6 @@
 "use client"
 
 import {
-  AudioLines,
   ChevronDown,
   FileDown,
   FilePlus,
@@ -16,6 +15,7 @@ import {
   VolumeX,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { BachLogo } from "@/components/studio/bach-logo"
 import {
   Select,
   SelectContent,
@@ -74,7 +74,7 @@ export function AppHeader({
     <header className="glass-panel flex flex-wrap items-center gap-3 border-b border-border/70 px-4 py-3 sm:px-6">
       <div className="flex items-center gap-2.5 pr-2">
         <div className="flex size-9 items-center justify-center rounded-lg bg-primary/15 text-primary ring-1 ring-primary/30">
-          <AudioLines className="size-5" />
+          <BachLogo className="size-7" />
         </div>
         <div className="flex flex-col leading-tight">
           <span className="font-mono text-sm font-semibold tracking-tight">
@@ -205,7 +205,7 @@ export function AppHeader({
               <SelectGroup>
                 {TEMPO_MARKINGS.map((t) => (
                   <SelectItem key={t.name} value={t.name}>
-                    {t.name} — {t.bpm} BPM
+                    {t.name}
                   </SelectItem>
                 ))}
               </SelectGroup>
@@ -262,7 +262,9 @@ export function AppHeader({
           }
           max={100}
           step={1}
-          className="flex-1"
+          /* Off-palette color so the master fader reads as the global
+             output rather than as one more voice. */
+          className="flex-1 [&_[data-slot=slider-range]]:bg-[var(--master-level)]"
           aria-label="Master volume"
         />
         <span className="w-8 shrink-0 text-right font-mono text-[11px] text-muted-foreground">

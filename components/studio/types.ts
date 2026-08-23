@@ -1,5 +1,17 @@
 export type ClefType = "treble" | "bass" | "alto" | "tenor"
 
+/**
+ * An octave transposition marking. In notation, 8va/8vb leave the written
+ * note positions untouched and instead instruct the player to sound the
+ * passage an octave higher (8va) or lower (8vb), shown as a dashed bracket.
+ */
+export type OctaveShift = "8va" | "8vb"
+
+export const OCTAVE_SHIFTS: { id: OctaveShift; label: string; hint: string }[] = [
+  { id: "8va", label: "8va", hint: "Sound one octave higher" },
+  { id: "8vb", label: "8vb", hint: "Sound one octave lower" },
+]
+
 export interface Voice {
   id: string
   name: string
@@ -11,7 +23,26 @@ export interface Voice {
   solo: boolean
   color: string
   notes: number[]
+  /** Octave brackets, keyed by zero-based measure index. */
+  octaveMarks: Record<number, OctaveShift>
 }
+
+/**
+ * Palette for voice colors. New voices claim the first unused entry, so
+ * every voice stays visually distinct on the score.
+ */
+export const VOICE_COLORS: string[] = [
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+  "var(--chart-4)",
+  "var(--chart-5)",
+  "var(--voice-6)",
+  "var(--voice-7)",
+  "var(--voice-8)",
+  "var(--voice-9)",
+  "var(--voice-10)",
+]
 
 export interface ChiptunePreset {
   id: string
@@ -59,26 +90,81 @@ export const TEMPO_MARKINGS: TempoMarking[] = [
   { name: "Presto", bpm: 184 },
 ]
 
-const PITCH_CLASSES = [
-  "C",
-  "C♯",
-  "D",
-  "D♯",
-  "E",
-  "F",
-  "F♯",
-  "G",
-  "G♯",
-  "A",
-  "A♯",
-  "B",
-]
+/**
+ * How many accidentals each key's signature carries, and which kind.
+ *
+ * Spellings here are the standard ones, which is why the list is not a
+ * mechanical sharp-name walk up the chromatic scale. A key signature has
+ * at most seven accidentals, so the tonic has to be spelled the way the
+ * circle of fifths reaches it: the black key above D is E♭ major (three
+ * flats), never "D♯ major", which would require nine sharps and does not
+ * exist in notation. Minor keys reach the same pitches by a different
+ * route, so several of them are correctly spelled with sharps.
+ */
+export interface KeySignatureSpec {
+  count: number
+  type: "sharp" | "flat"
+}
 
-// All 24 major and minor keys, walking every half step from C to B.
-export const MUSICAL_KEYS: string[] = PITCH_CLASSES.flatMap((pitch) => [
-  `${pitch} major`,
-  `${pitch} minor`,
-])
+export const KEY_SIGNATURES: Record<string, KeySignatureSpec> = {
+  // Majors, around the circle of fifths from C.
+  "C major": { count: 0, type: "sharp" },
+  "G major": { count: 1, type: "sharp" },
+  "D major": { count: 2, type: "sharp" },
+  "A major": { count: 3, type: "sharp" },
+  "E major": { count: 4, type: "sharp" },
+  "B major": { count: 5, type: "sharp" },
+  "F♯ major": { count: 6, type: "sharp" },
+  "F major": { count: 1, type: "flat" },
+  "B♭ major": { count: 2, type: "flat" },
+  "E♭ major": { count: 3, type: "flat" },
+  "A♭ major": { count: 4, type: "flat" },
+  "D♭ major": { count: 5, type: "flat" },
+  // Minors. A minor is the relative of C major, so it is the empty one.
+  "A minor": { count: 0, type: "sharp" },
+  "E minor": { count: 1, type: "sharp" },
+  "B minor": { count: 2, type: "sharp" },
+  "F♯ minor": { count: 3, type: "sharp" },
+  "C♯ minor": { count: 4, type: "sharp" },
+  "G♯ minor": { count: 5, type: "sharp" },
+  "D minor": { count: 1, type: "flat" },
+  "G minor": { count: 2, type: "flat" },
+  "C minor": { count: 3, type: "flat" },
+  "F minor": { count: 4, type: "flat" },
+  "B♭ minor": { count: 5, type: "flat" },
+  "E♭ minor": { count: 6, type: "flat" },
+}
+
+/**
+ * All 24 keys, ordered by tonic pitch so the dropdown still reads as a
+ * chromatic walk, with majors and minors interleaved as before.
+ */
+export const MUSICAL_KEYS: string[] = [
+  "C major",
+  "C minor",
+  "D♭ major",
+  "C♯ minor",
+  "D major",
+  "D minor",
+  "E♭ major",
+  "E♭ minor",
+  "E major",
+  "E minor",
+  "F major",
+  "F minor",
+  "F♯ major",
+  "F♯ minor",
+  "G major",
+  "G minor",
+  "A♭ major",
+  "G♯ minor",
+  "A major",
+  "A minor",
+  "B♭ major",
+  "B♭ minor",
+  "B major",
+  "B minor",
+]
 
 export type NoteDurationId = "32nd" | "16th" | "8th" | "quarter" | "half" | "whole"
 
@@ -176,6 +262,7 @@ export const INITIAL_VOICES: Voice[] = [
     solo: false,
     color: "var(--chart-1)",
     notes: [67, 69, 71, 72, 71, 69, 67, 65, 67, 71, 74, 72, 71, 69, 67, 65],
+    octaveMarks: {},
   },
   {
     id: "alto",
@@ -188,6 +275,7 @@ export const INITIAL_VOICES: Voice[] = [
     solo: false,
     color: "var(--chart-2)",
     notes: [60, 62, 64, 65, 64, 62, 64, 60, 59, 60, 62, 64, 65, 64, 62, 60],
+    octaveMarks: {},
   },
   {
     id: "tenor",
@@ -200,6 +288,7 @@ export const INITIAL_VOICES: Voice[] = [
     solo: false,
     color: "var(--chart-3)",
     notes: [55, 57, 59, 57, 55, 53, 55, 57, 59, 60, 59, 57, 55, 53, 52, 53],
+    octaveMarks: {},
   },
   {
     id: "bass",
@@ -212,5 +301,6 @@ export const INITIAL_VOICES: Voice[] = [
     solo: false,
     color: "var(--chart-4)",
     notes: [48, 47, 45, 43, 45, 47, 48, 50, 43, 45, 48, 47, 45, 43, 41, 48],
+    octaveMarks: {},
   },
 ]

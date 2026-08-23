@@ -73,6 +73,18 @@
   --chart-3: oklch(0.68 0.17 320);
   --chart-4: oklch(0.72 0.16 140);
   --chart-5: oklch(0.65 0.2 30);
+  /* Extra voice colors, same lightness/chroma family as the charts above
+     so additional voices stay on-palette. */
+  --voice-6: oklch(0.74 0.15 255);
+  --voice-7: oklch(0.76 0.16 105);
+  --voice-8: oklch(0.7 0.17 285);
+  --voice-9: oklch(0.73 0.16 170);
+  --voice-10: oklch(0.68 0.18 355);
+  /* Master output level. Deliberately NOT part of the voice palette: hue
+     230 sits in the widest gap between the voice hues (195 and 255), and
+     the lower lightness separates it further, so the master fader can
+     never be mistaken for a voice's own fader. */
+  --master-level: oklch(0.58 0.17 230);
   --radius: 0.5rem;
   --sidebar: oklch(0.185 0.038 258 / 80%);
   --sidebar-foreground: oklch(0.94 0.015 250);
@@ -109,6 +121,14 @@
   --chart-3: oklch(0.68 0.17 320);
   --chart-4: oklch(0.72 0.16 140);
   --chart-5: oklch(0.65 0.2 30);
+  --voice-6: oklch(0.74 0.15 255);
+  --voice-7: oklch(0.76 0.16 105);
+  --voice-8: oklch(0.7 0.17 285);
+  --voice-9: oklch(0.73 0.16 170);
+  --voice-10: oklch(0.68 0.18 355);
+  /* Brighter than the light-theme value so it stays legible against the
+     dark background while keeping the same off-palette hue. */
+  --master-level: oklch(0.66 0.17 230);
   --sidebar: oklch(0.185 0.038 258 / 80%);
   --sidebar-foreground: oklch(0.94 0.015 250);
   --sidebar-primary: oklch(0.78 0.15 195);
