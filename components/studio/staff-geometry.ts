@@ -1,4 +1,4 @@
-import type { ClefType } from "@/components/studio/types"
+import type { AccidentalId, ClefType } from "@/components/studio/types"
 
 /**
  * Staff geometry: the single source of truth that maps musical pitch to
@@ -46,7 +46,27 @@ const PITCH_CLASS_IS_ALTERED = [
   false, true, false, true, false, true, false,
 ]
 
-const LETTER_NAMES = ["C", "D", "E", "F", "G", "A", "B"]
+export const LETTER_NAMES = ["C", "D", "E", "F", "G", "A", "B"]
+
+/** Letter name → index into LETTER_NAMES, for keyboard note entry (A-G keys). */
+export const LETTER_TO_INDEX: Record<string, number> = {
+  C: 0,
+  D: 1,
+  E: 2,
+  F: 3,
+  G: 4,
+  A: 5,
+  B: 6,
+}
+
+/** Semitone offset an accidental applies to its letter's natural pitch. */
+export const ACCIDENTAL_OFFSET: Record<AccidentalId, number> = {
+  "double-flat": -2,
+  flat: -1,
+  natural: 0,
+  sharp: 1,
+  "double-sharp": 2,
+}
 
 /**
  * Absolute diatonic step number for a MIDI pitch — how many letter names
@@ -63,6 +83,77 @@ export function pitchFromDiatonicStep(step: number): number {
   const octave = Math.floor(step / 7)
   const letter = ((step % 7) + 7) % 7
   return octave * 12 + LETTER_SEMITONES[letter]
+}
+
+/** Letter index (0=C..6=B) of a diatonic step, independent of octave. */
+export function letterIndexOfStep(step: number): number {
+  return ((step % 7) + 7) % 7
+}
+
+/** Which octave (in diatonicStep's octave numbering) a step falls in. */
+export function octaveOfStep(step: number): number {
+  return Math.floor(step / 7)
+}
+
+/**
+ * The actual sounding MIDI pitch of a written note: its natural letter
+ * pitch, adjusted by its explicit accidental (or unadjusted if natural).
+ */
+export function spelledPitchToMidi(
+  step: number,
+  accidental: AccidentalId | null,
+): number {
+  return pitchFromDiatonicStep(step) + (accidental ? ACCIDENTAL_OFFSET[accidental] : 0)
+}
+
+/**
+ * The step (of the given letter) whose natural pitch sits closest to an
+ * anchor pitch. Used by step-time keyboard entry to pick a sensible octave
+ * when the user types a bare letter — e.g. typing "C" near a preceding B4
+ * should land on C5, not some arbitrary default octave.
+ */
+export function nearestStepForLetter(letterIndex: number, anchorPitch: number): number {
+  const anchorOctave = Math.floor(anchorPitch / 12)
+  let best = anchorOctave * 7 + letterIndex
+  let bestDist = Infinity
+  for (let octave = anchorOctave - 1; octave <= anchorOctave + 1; octave++) {
+    const step = octave * 7 + letterIndex
+    const dist = Math.abs(pitchFromDiatonicStep(step) - anchorPitch)
+    if (dist < bestDist) {
+      bestDist = dist
+      best = step
+    }
+  }
+  return best
+}
+
+const ACCIDENTAL_BY_OFFSET: Record<number, AccidentalId | null> = {
+  [-2]: "double-flat",
+  [-1]: "flat",
+  [0]: null,
+  [1]: "sharp",
+  [2]: "double-sharp",
+}
+
+/**
+ * Chromatic semitone nudge: re-spells the same letter via a different
+ * accidental when possible (C -> C♯), and only steps to the adjacent
+ * letter when the target pitch can't be reached by any accidental on the
+ * current one (C♯♯ -> D, not some invalid triple-sharp).
+ */
+export function nudgeChromatic(
+  step: number,
+  accidental: AccidentalId | null,
+  direction: 1 | -1,
+): { step: number; accidental: AccidentalId | null } {
+  const target = spelledPitchToMidi(step, accidental) + direction
+  for (let letterStep = step; Math.abs(letterStep - step) <= 2; letterStep += direction) {
+    const offset = target - pitchFromDiatonicStep(letterStep)
+    if (offset >= -2 && offset <= 2) {
+      return { step: letterStep, accidental: ACCIDENTAL_BY_OFFSET[offset] }
+    }
+  }
+  return { step: step + direction, accidental: null }
 }
 
 /**
@@ -87,6 +178,16 @@ export function staffPosToPitch(staffPos: number, clef: ClefType): number {
   return pitchFromDiatonicStep(
     diatonicStep(CLEF_MIDDLE_LINE_PITCH[clef]) + staffPos,
   )
+}
+
+/** Diatonic step (letter+octave, accidental-independent) at a staff position. */
+export function staffPosToStep(staffPos: number, clef: ClefType): number {
+  return diatonicStep(CLEF_MIDDLE_LINE_PITCH[clef]) + staffPos
+}
+
+/** Inverse of staffPosToStep — where a written step sits on this clef's staff. */
+export function stepToStaffPos(step: number, clef: ClefType): number {
+  return step - diatonicStep(CLEF_MIDDLE_LINE_PITCH[clef])
 }
 
 /** Vertical pixel offset from the staff's middle line. Up is negative. */

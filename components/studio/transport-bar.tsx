@@ -142,18 +142,6 @@ export function TransportBar({
           isScrubbing && "cursor-grabbing",
         )}
       >
-        {/* Barlines, placed at the same x as the barlines drawn on the
-            staves rather than spread evenly across the panel. */}
-        <div className="pointer-events-none absolute inset-x-0 top-1/2 h-3 -translate-y-1/2 overflow-hidden">
-          {Array.from({ length: measureCount + 1 }, (_, i) => i).map((i) => (
-            <span
-              key={i}
-              className="absolute top-0 h-full w-px bg-border"
-              style={{ left: beatX(i * beatsPerMeasure) }}
-            />
-          ))}
-        </div>
-
         <div className="pointer-events-none absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 overflow-hidden rounded-full bg-muted">
           {/* Loop region, matching the shaded span over the score. */}
           <span
@@ -181,6 +169,23 @@ export function TransportBar({
                 ) * noteWidth,
             }}
           />
+        </div>
+
+        {/* Barlines, placed at the same x as the barlines drawn on the
+            staves rather than spread evenly across the panel. Drawn above
+            the loop/elapsed fill (not below it) and at higher contrast than
+            the theme's default border color, which at 12% alpha read as
+            barely-there once a semi-transparent fill sat behind them —
+            the loop region sweeping past made them seem to flicker in and
+            out rather than stay reliably visible. */}
+        <div className="pointer-events-none absolute inset-x-0 top-1/2 h-3 -translate-y-1/2 overflow-hidden">
+          {Array.from({ length: measureCount + 1 }, (_, i) => i).map((i) => (
+            <span
+              key={i}
+              className="absolute top-0 h-full w-px bg-foreground/30"
+              style={{ left: beatX(i * beatsPerMeasure) }}
+            />
+          ))}
         </div>
 
         {/* Playhead marker. Same x as the playhead line on the staves. */}

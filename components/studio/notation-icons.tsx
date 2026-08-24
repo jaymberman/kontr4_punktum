@@ -1,4 +1,4 @@
-import type { NoteDurationId } from "@/components/studio/types"
+import type { AccidentalId, NoteDurationId } from "@/components/studio/types"
 
 const FLAG_COUNT: Record<NoteDurationId, number> = {
   whole: 0,
@@ -86,8 +86,6 @@ export function RestIcon({
     </span>
   )
 }
-
-export type AccidentalId = "double-flat" | "flat" | "natural" | "sharp" | "double-sharp"
 
 /**
  * Real engraved accidental glyphs — the standard sharp/flat/natural signs

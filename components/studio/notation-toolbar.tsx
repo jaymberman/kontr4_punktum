@@ -17,6 +17,9 @@ import {
   NOTE_DURATIONS,
   OCTAVE_SHIFTS,
   REST_DURATIONS,
+  type AccidentalId,
+  type NoteDurationId,
+  type NoteInputState,
   type OctaveShift,
 } from "@/components/studio/types"
 import {
@@ -24,26 +27,29 @@ import {
   NoteIcon,
   RestIcon,
   TieIcon,
-  type AccidentalId,
 } from "@/components/studio/notation-icons"
 
 export function NotationToolbar({
   measureCount,
   selectedMeasure,
   activeOctaveShift,
+  inputState,
+  tieAtCursor,
   onAddMeasures,
   onSetOctaveShift,
+  onInputStateChange,
+  onToggleTie,
 }: {
   measureCount: number
   selectedMeasure: number | null
   activeOctaveShift: OctaveShift | null
+  inputState: NoteInputState
+  tieAtCursor: boolean
   onAddMeasures: (count: number) => void
   onSetOctaveShift: (shift: OctaveShift) => void
+  onInputStateChange: (patch: Partial<NoteInputState>) => void
+  onToggleTie: () => void
 }) {
-  const [noteDuration, setNoteDuration] = useState<string | null>("quarter")
-  const [restDuration, setRestDuration] = useState<string | null>(null)
-  const [accidental, setAccidental] = useState<string | null>(null)
-  const [tieActive, setTieActive] = useState(false)
   /** Raw text, so the field can be cleared while typing a new number. */
   const [measuresToAdd, setMeasuresToAdd] = useState("1")
 
@@ -57,8 +63,10 @@ export function NotationToolbar({
         spacing={0}
         variant="outline"
         className="shrink-0"
-        value={noteDuration ? [noteDuration] : []}
-        onValueChange={(v) => setNoteDuration(v[0] ?? null)}
+        value={[inputState.duration]}
+        onValueChange={(v) =>
+          v[0] && onInputStateChange({ duration: v[0] as NoteDurationId })
+        }
       >
         {NOTE_DURATIONS.map((d) => (
           <Tooltip key={d.id}>
@@ -81,8 +89,10 @@ export function NotationToolbar({
         spacing={0}
         variant="outline"
         className="shrink-0"
-        value={restDuration ? [restDuration] : []}
-        onValueChange={(v) => setRestDuration(v[0] ?? null)}
+        value={[inputState.duration]}
+        onValueChange={(v) =>
+          v[0] && onInputStateChange({ duration: v[0] as NoteDurationId })
+        }
       >
         {REST_DURATIONS.map((d) => (
           <Tooltip key={d.id}>
@@ -105,8 +115,10 @@ export function NotationToolbar({
         spacing={0}
         variant="outline"
         className="shrink-0"
-        value={accidental ? [accidental] : []}
-        onValueChange={(v) => setAccidental(v[0] ?? null)}
+        value={inputState.pendingAccidental ? [inputState.pendingAccidental] : []}
+        onValueChange={(v) =>
+          onInputStateChange({ pendingAccidental: (v[0] as AccidentalId) ?? null })
+        }
       >
         {ACCIDENTALS.map((a) => (
           <Tooltip key={a.id}>
@@ -130,8 +142,8 @@ export function NotationToolbar({
             <Toggle
               size="sm"
               variant="outline"
-              pressed={tieActive}
-              onPressedChange={setTieActive}
+              pressed={tieAtCursor}
+              onPressedChange={onToggleTie}
               aria-label="Tie"
               className="shrink-0 data-pressed:bg-accent data-pressed:text-accent-foreground"
             >

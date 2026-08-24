@@ -12,6 +12,46 @@ export const OCTAVE_SHIFTS: { id: OctaveShift; label: string; hint: string }[] =
   { id: "8vb", label: "8vb", hint: "Sound one octave lower" },
 ]
 
+export type NoteDurationId = "32nd" | "16th" | "8th" | "quarter" | "half" | "whole"
+
+export type AccidentalId = "double-flat" | "flat" | "natural" | "sharp" | "double-sharp"
+
+/**
+ * A single note or rest event with real rhythmic duration. Pitch is stored
+ * as a diatonic step (see staff-geometry.ts's `diatonicStep` numbering,
+ * octave*7 + letter index) plus an explicit accidental, rather than a raw
+ * MIDI number — this is what lets "flat then D" mean D♭ specifically,
+ * rather than some enharmonically ambiguous pitch class.
+ *
+ * `accidental` always reflects the note's *actual* sounding pitch: entering
+ * a plain letter in a key with an active key signature resolves and stores
+ * the key-signature-implied accidental right here (e.g. a plain "F" in D
+ * major is stored with accidental: "sharp"), not `null`. `null` means the
+ * note is genuinely natural in that context. Whether a glyph is actually
+ * drawn for that accidental is a separate, rendering-only decision (see
+ * rhythm.ts's `resolveInEffectAccidental`) — this field is always the
+ * ground truth for pitch/audio.
+ */
+interface NoteEventBase {
+  id: string
+  duration: NoteDurationId
+  dotted: boolean
+}
+
+export type NoteEvent =
+  | (NoteEventBase & {
+      kind: "note"
+      step: number
+      accidental: AccidentalId | null
+      tiedToNext: boolean
+    })
+  | (NoteEventBase & { kind: "rest" })
+
+/** A measure's events must always sum to exactly one measure's worth of ticks. */
+export interface Measure {
+  events: NoteEvent[]
+}
+
 export interface Voice {
   id: string
   name: string
@@ -22,7 +62,7 @@ export interface Voice {
   muted: boolean
   solo: boolean
   color: string
-  notes: number[]
+  measures: Measure[]
   /** Octave brackets, keyed by zero-based measure index. */
   octaveMarks: Record<number, OctaveShift>
 }
@@ -166,7 +206,27 @@ export const MUSICAL_KEYS: string[] = [
   "B minor",
 ]
 
-export type NoteDurationId = "32nd" | "16th" | "8th" | "quarter" | "half" | "whole"
+/**
+ * Letter (by index into staff-geometry.ts's LETTER_NAMES, C D E F G A B)
+ * order in which a key signature accumulates accidentals: sharps go
+ * F C G D A E B, flats go the reverse, B E A D G C F.
+ */
+const SHARP_ORDER_LETTERS = [3, 0, 4, 1, 5, 2, 6]
+const FLAT_ORDER_LETTERS = [6, 2, 5, 1, 4, 0, 3]
+
+/**
+ * The accidental a key signature implies for a given letter, independent of
+ * octave (a key signature affects every octave of an affected letter).
+ * Returns null when that letter is natural in this key.
+ */
+export function keySignatureAccidentalForLetter(
+  letterIndex: number,
+  spec: KeySignatureSpec,
+): AccidentalId | null {
+  if (spec.count === 0) return null
+  const order = spec.type === "sharp" ? SHARP_ORDER_LETTERS : FLAT_ORDER_LETTERS
+  return order.slice(0, spec.count).includes(letterIndex) ? spec.type : null
+}
 
 export interface NotationOption {
   id: string
@@ -193,13 +253,34 @@ export const REST_DURATIONS: { id: NoteDurationId; label: string }[] = [
   { id: "whole", label: "Whole rest" },
 ]
 
-export const ACCIDENTALS: NotationOption[] = [
+export const ACCIDENTALS: { id: AccidentalId; label: string }[] = [
   { id: "double-flat", label: "Double flat" },
   { id: "flat", label: "Flat" },
   { id: "natural", label: "Natural" },
   { id: "sharp", label: "Sharp" },
   { id: "double-sharp", label: "Double sharp" },
 ]
+
+export interface TimeSignature {
+  numerator: number
+  denominator: 2 | 4 | 8 | 16
+}
+
+export const TIME_SIGNATURES: { value: TimeSignature; label: string }[] = [
+  { value: { numerator: 2, denominator: 4 }, label: "2/4" },
+  { value: { numerator: 3, denominator: 4 }, label: "3/4" },
+  { value: { numerator: 4, denominator: 4 }, label: "4/4" },
+  { value: { numerator: 6, denominator: 8 }, label: "6/8" },
+  { value: { numerator: 9, denominator: 8 }, label: "9/8" },
+  { value: { numerator: 12, denominator: 8 }, label: "12/8" },
+]
+
+/** Shared note-entry state driving both the toolbar and keyboard step-time entry. */
+export interface NoteInputState {
+  duration: NoteDurationId
+  dotted: boolean
+  pendingAccidental: AccidentalId | null
+}
 
 export const CHIPTUNE_PRESETS: ChiptunePreset[] = [
   { id: "pulse-12", label: "Pulse 12.5%", category: "Pulse & Square" },
@@ -241,14 +322,46 @@ export const CHIPTUNE_PRESETS: ChiptunePreset[] = [
   { id: "crush-4bit", label: "Crushed 4-Bit", category: "Lo-Fi & Noise" },
   { id: "crush-8bit", label: "Crushed 8-Bit", category: "Lo-Fi & Noise" },
   { id: "tape-lofi", label: "Lo-Fi Tape", category: "Lo-Fi & Noise" },
-  { id: "kick-8bit", label: "8-Bit Kick", category: "Percussion" },
-  { id: "snare-8bit", label: "8-Bit Snare", category: "Percussion" },
-  { id: "hat-8bit", label: "8-Bit Hi-Hat", category: "Percussion" },
 ]
 
 export const PRESET_CATEGORIES = Array.from(
   new Set(CHIPTUNE_PRESETS.map((p) => p.category)),
 )
+
+/**
+ * Seed-data helpers. The four seed voices below were originally a flat
+ * `notes: number[]` of raw MIDI pitches — 16 implicit quarter notes each,
+ * i.e. exactly 4 measures at 4/4. Every one of those pitches happens to be
+ * diatonically natural (no black keys), so migrating them to the new
+ * step+accidental model is a straight `diatonicStep` conversion; the only
+ * wrinkle is that the default key ("D minor", one flat: B) would otherwise
+ * silently re-spell any written B as B♭. An explicit "natural" accidental
+ * is stored on those notes so the seed melodies keep sounding exactly as
+ * they did before this migration, not reinterpreted through the key
+ * signature that happens to be active by default.
+ */
+let seedIdCounter = 0
+function seedNote(step: number, accidental: AccidentalId | null = null): NoteEvent {
+  return {
+    kind: "note",
+    id: `seed-${seedIdCounter++}`,
+    step,
+    accidental,
+    duration: "quarter",
+    dotted: false,
+    tiedToNext: false,
+  }
+}
+function seedMeasures(steps: number[], naturalOverrideLetter: number): Measure[] {
+  const events = steps.map((step) =>
+    seedNote(step, ((step % 7) + 7) % 7 === naturalOverrideLetter ? "natural" : null),
+  )
+  const measures: Measure[] = []
+  for (let i = 0; i < events.length; i += 4) {
+    measures.push({ events: events.slice(i, i + 4) })
+  }
+  return measures
+}
 
 export const INITIAL_VOICES: Voice[] = [
   {
@@ -261,7 +374,7 @@ export const INITIAL_VOICES: Voice[] = [
     muted: false,
     solo: false,
     color: "var(--chart-1)",
-    notes: [67, 69, 71, 72, 71, 69, 67, 65, 67, 71, 74, 72, 71, 69, 67, 65],
+    measures: seedMeasures([39, 40, 41, 42, 41, 40, 39, 38, 39, 41, 43, 42, 41, 40, 39, 38], 6),
     octaveMarks: {},
   },
   {
@@ -274,7 +387,7 @@ export const INITIAL_VOICES: Voice[] = [
     muted: false,
     solo: false,
     color: "var(--chart-2)",
-    notes: [60, 62, 64, 65, 64, 62, 64, 60, 59, 60, 62, 64, 65, 64, 62, 60],
+    measures: seedMeasures([35, 36, 37, 38, 37, 36, 37, 35, 34, 35, 36, 37, 38, 37, 36, 35], 6),
     octaveMarks: {},
   },
   {
@@ -287,7 +400,7 @@ export const INITIAL_VOICES: Voice[] = [
     muted: false,
     solo: false,
     color: "var(--chart-3)",
-    notes: [55, 57, 59, 57, 55, 53, 55, 57, 59, 60, 59, 57, 55, 53, 52, 53],
+    measures: seedMeasures([32, 33, 34, 33, 32, 31, 32, 33, 34, 35, 34, 33, 32, 31, 30, 31], 6),
     octaveMarks: {},
   },
   {
@@ -300,7 +413,7 @@ export const INITIAL_VOICES: Voice[] = [
     muted: false,
     solo: false,
     color: "var(--chart-4)",
-    notes: [48, 47, 45, 43, 45, 47, 48, 50, 43, 45, 48, 47, 45, 43, 41, 48],
+    measures: seedMeasures([28, 27, 26, 25, 26, 27, 28, 29, 25, 26, 28, 27, 26, 25, 24, 28], 6),
     octaveMarks: {},
   },
 ]

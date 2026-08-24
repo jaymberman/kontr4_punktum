@@ -7,17 +7,42 @@ import { RightPanel } from "@/components/studio/right-panel"
 import { MIN_LOOP_BEATS } from "@/components/studio/transport-bar"
 import {
   INITIAL_VOICES,
+  KEY_SIGNATURES,
   TEMPO_MARKINGS,
   VOICE_COLORS,
+  type NoteEvent,
+  type NoteInputState,
   type OctaveShift,
+  type TimeSignature,
   type Voice,
 } from "@/components/studio/types"
+import {
+  beatsPerMeasure as beatsPerMeasureOf,
+  buildNoteEvent,
+  buildRestEvent,
+  findEventAtTick,
+  getMeasureOrImplicit,
+  nextEventBoundary,
+  placeEvent,
+  prevEventBoundary,
+  resolveNoteAccidental,
+  updateVoiceMeasure,
+  type CursorPos,
+} from "@/components/studio/rhythm"
+import { useNoteEntryKeybinds } from "@/components/studio/use-note-entry-keybinds"
+import { usePlaybackAudio } from "@/components/studio/use-playback-audio"
 
-const BEATS_PER_MEASURE = 4
 const INITIAL_MEASURE_COUNT = 4
+const INITIAL_TIME_SIGNATURE: TimeSignature = { numerator: 4, denominator: 4 }
 
 /** A score always has at least one measure; there is no upper bound. */
 const MIN_MEASURES = 1
+const MAX_HISTORY = 100
+
+interface HistoryEntry {
+  voices: Voice[]
+  measureCount: number
+}
 
 export function StudioShell() {
   const [voices, setVoices] = useState<Voice[]>(INITIAL_VOICES)
@@ -29,12 +54,13 @@ export function StudioShell() {
   const [songName, setSongName] = useState("Prelude 1")
   const [musicalKey, setMusicalKey] = useState("D minor")
   const [tempo, setTempo] = useState("Andante")
-  const [timeSignature, setTimeSignature] = useState("4/4")
+  const [timeSignature, setTimeSignature] = useState<TimeSignature>(INITIAL_TIME_SIGNATURE)
   const [isPlaying, setIsPlaying] = useState(false)
   const [isLooping, setIsLooping] = useState(true)
   const [masterVolume, setMasterVolume] = useState(78)
 
-  const totalBeats = measureCount * BEATS_PER_MEASURE
+  const beatsPerMeasure = beatsPerMeasureOf(timeSignature)
+  const totalBeats = measureCount * beatsPerMeasure
 
   /**
    * Playback position in beats, as a continuous value rather than a beat
@@ -46,9 +72,21 @@ export function StudioShell() {
   const beatRef = useRef(0)
 
   const [loopStart, setLoopStart] = useState(0)
-  const [loopEnd, setLoopEnd] = useState(INITIAL_MEASURE_COUNT * BEATS_PER_MEASURE)
+  const [loopEnd, setLoopEnd] = useState(INITIAL_MEASURE_COUNT * beatsPerMeasureOf(INITIAL_TIME_SIGNATURE))
 
   const bpm = TEMPO_MARKINGS.find((t) => t.name === tempo)?.bpm ?? 92
+
+  // Mirrors, so callbacks that must stay referentially stable (read by the
+  // global keybind hook's effect deps) can still read the latest values —
+  // the same pattern beatRef already uses for the rAF transport loop.
+  const voicesRef = useRef(voices)
+  useEffect(() => {
+    voicesRef.current = voices
+  }, [voices])
+  const measureCountRef = useRef(measureCount)
+  useEffect(() => {
+    measureCountRef.current = measureCount
+  }, [measureCount])
 
   const seek = useCallback((beat: number) => {
     const next = Math.max(0, beat)
@@ -120,9 +158,23 @@ export function StudioShell() {
     return () => cancelAnimationFrame(frame)
   }, [isPlaying, bpm, isLooping, loopStart, loopEnd])
 
+  const { resume: resumeAudio } = usePlaybackAudio({
+    voices,
+    timeSignature,
+    measureCount,
+    isPlaying,
+    isLooping,
+    loopStart,
+    loopEnd,
+    bpm,
+    masterVolume,
+    beatRef,
+  })
+
   /** Start from the loop's beginning whenever the playhead sits outside it. */
   const handleTogglePlay = () => {
     if (!isPlaying) {
+      resumeAudio()
       const at = beatRef.current
       if (at < loopStart || at >= loopEnd - 1e-6) seek(loopStart)
     }
@@ -136,7 +188,7 @@ export function StudioShell() {
    */
   const handleLoopChange = useCallback(
     (start: number, end: number) => {
-      const total = measureCount * BEATS_PER_MEASURE
+      const total = measureCount * beatsPerMeasure
       // Boundaries are continuous, so these clamp against the minimum
       // span rather than rounding to whole beats.
       const nextStart = Math.max(0, Math.min(start, total - MIN_LOOP_BEATS))
@@ -150,11 +202,28 @@ export function StudioShell() {
         seek(nextStart)
       }
     },
-    [measureCount, seek],
+    [measureCount, beatsPerMeasure, seek],
   )
 
+  /**
+   * Non-editing voice patches (clef, preset, color, volume, pan, mute,
+   * solo) bypass undo history entirely — undo is scoped to notation edits,
+   * and a slider drag firing on every pointer-move would otherwise spam
+   * the history stack.
+   */
   const handleUpdateVoice = useCallback((id: string, patch: Partial<Voice>) => {
     setVoices((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)))
+  }, [])
+
+  /**
+   * Selecting a voice from the mixer panel is about inspecting/adjusting
+   * that voice, not typing notes into it — so unlike selecting one by
+   * clicking a note on the staff, this doesn't bring the note-entry cursor
+   * along with it.
+   */
+  const handleSelectVoiceFromPanel = useCallback((id: string) => {
+    setActiveVoiceId(id)
+    setHasEditFocus(false)
   }, [])
 
   const handleStop = () => {
@@ -162,38 +231,90 @@ export function StudioShell() {
     seek(loopStart)
   }
 
-  /** Append measures. The score length is unbounded. */
-  const handleAddMeasures = useCallback((count: number) => {
-    const safe = Math.max(1, Math.trunc(count))
-    setMeasureCount((prev) => prev + safe)
+  // ---- Undo/redo -----------------------------------------------------
+
+  const [past, setPast] = useState<HistoryEntry[]>([])
+  const [future, setFuture] = useState<HistoryEntry[]>([])
+  // Mirrors, for the same reason voicesRef/measureCountRef exist: undo/redo
+  // need a synchronous read of the latest stack without nesting setState
+  // calls inside another setState's updater (which React's StrictMode
+  // double-invokes — any side effect in there, like calling setVoices,
+  // fires twice and corrupts state across the double-invocation).
+  const pastRef = useRef(past)
+  useEffect(() => {
+    pastRef.current = past
+  }, [past])
+  const futureRef = useRef(future)
+  useEffect(() => {
+    futureRef.current = future
+  }, [future])
+
+  /** Snapshots the current (pre-change) state, then applies `next`. */
+  const commit = useCallback((next: { voices?: Voice[]; measureCount?: number }) => {
+    const entry: HistoryEntry = {
+      voices: voicesRef.current,
+      measureCount: measureCountRef.current,
+    }
+    setPast((p) => [...p, entry].slice(-MAX_HISTORY))
+    setFuture([])
+    if (next.voices) setVoices(next.voices)
+    if (next.measureCount !== undefined) setMeasureCount(next.measureCount)
   }, [])
 
-  /**
-   * Remove one measure and splice the corresponding beats out of every
-   * voice, so the notes after it shift left rather than being orphaned.
-   * Octave brackets on later measures shift down with them.
-   */
-  const handleDeleteMeasure = useCallback((measureIndex: number) => {
-    setMeasureCount((count) => {
-      if (count <= MIN_MEASURES) return count
-      const start = measureIndex * BEATS_PER_MEASURE
-      setVoices((prev) =>
-        prev.map((v) => {
-          const notes = [...v.notes]
-          notes.splice(start, BEATS_PER_MEASURE)
-          const octaveMarks: Record<number, OctaveShift> = {}
-          for (const [key, shift] of Object.entries(v.octaveMarks)) {
-            const m = Number(key)
-            if (m === measureIndex) continue
-            octaveMarks[m > measureIndex ? m - 1 : m] = shift
-          }
-          return { ...v, notes, octaveMarks }
-        }),
-      )
-      setSelectedMeasure(null)
-      return count - 1
-    })
+  const undo = useCallback(() => {
+    const p = pastRef.current
+    if (p.length === 0) return
+    const entry = p[p.length - 1]
+    setFuture((f) => [...f, { voices: voicesRef.current, measureCount: measureCountRef.current }])
+    setPast((prev) => prev.slice(0, -1))
+    setVoices(entry.voices)
+    setMeasureCount(entry.measureCount)
   }, [])
+
+  const redo = useCallback(() => {
+    const f = futureRef.current
+    if (f.length === 0) return
+    const entry = f[f.length - 1]
+    setPast((p) => [...p, { voices: voicesRef.current, measureCount: measureCountRef.current }])
+    setFuture((prev) => prev.slice(0, -1))
+    setVoices(entry.voices)
+    setMeasureCount(entry.measureCount)
+  }, [])
+
+  /** Append measures. The score length is unbounded. */
+  const handleAddMeasures = useCallback(
+    (count: number) => {
+      const safe = Math.max(1, Math.trunc(count))
+      commit({ measureCount: measureCountRef.current + safe })
+    },
+    [commit],
+  )
+
+  /**
+   * Remove one measure and splice it out of every voice, so the notes
+   * after it shift left rather than being orphaned. Octave brackets on
+   * later measures shift down with them.
+   */
+  const handleDeleteMeasure = useCallback(
+    (measureIndex: number) => {
+      const count = measureCountRef.current
+      if (count <= MIN_MEASURES) return
+      const nextVoices = voicesRef.current.map((v) => {
+        const measures = [...v.measures]
+        if (measureIndex < measures.length) measures.splice(measureIndex, 1)
+        const octaveMarks: Record<number, OctaveShift> = {}
+        for (const [key, shift] of Object.entries(v.octaveMarks)) {
+          const m = Number(key)
+          if (m === measureIndex) continue
+          octaveMarks[m > measureIndex ? m - 1 : m] = shift
+        }
+        return { ...v, measures, octaveMarks }
+      })
+      commit({ voices: nextVoices, measureCount: count - 1 })
+      setSelectedMeasure(null)
+    },
+    [commit],
+  )
 
   /**
    * Toggle an octave bracket on the selected measure of the active voice.
@@ -202,8 +323,8 @@ export function StudioShell() {
   const handleSetOctaveShift = useCallback(
     (shift: OctaveShift) => {
       if (selectedMeasure === null || !activeVoiceId) return
-      setVoices((prev) =>
-        prev.map((v) => {
+      commit({
+        voices: voicesRef.current.map((v) => {
           if (v.id !== activeVoiceId) return v
           const octaveMarks = { ...v.octaveMarks }
           if (octaveMarks[selectedMeasure] === shift) {
@@ -213,9 +334,9 @@ export function StudioShell() {
           }
           return { ...v, octaveMarks }
         }),
-      )
+      })
     },
-    [selectedMeasure, activeVoiceId],
+    [selectedMeasure, activeVoiceId, commit],
   )
 
   /**
@@ -224,51 +345,196 @@ export function StudioShell() {
    * is what makes them tellable apart on the score.
    */
   const handleAddVoice = useCallback(() => {
-    setVoices((prev) => {
-      const used = new Set(prev.map((v) => v.color))
-      const free = VOICE_COLORS.filter((c) => !used.has(c))
-      if (free.length === 0) return prev
-      const color = free[Math.floor(Math.random() * free.length)]
-      const id = `voice-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
-      const next: Voice = {
-        id,
-        name: `Voice ${prev.length + 1}`,
-        clef: "treble",
-        presetId: "pulse-50",
-        volume: 70,
-        pan: 0,
-        muted: false,
-        solo: false,
-        color,
-        notes: [],
-        octaveMarks: {},
-      }
-      setActiveVoiceId(id)
-      return [...prev, next]
-    })
-  }, [])
+    const prev = voicesRef.current
+    const used = new Set(prev.map((v) => v.color))
+    const free = VOICE_COLORS.filter((c) => !used.has(c))
+    if (free.length === 0) return
+    const color = free[Math.floor(Math.random() * free.length)]
+    const id = `voice-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+    const next: Voice = {
+      id,
+      name: `Voice ${prev.length + 1}`,
+      clef: "treble",
+      presetId: "pulse-50",
+      volume: 70,
+      pan: 0,
+      muted: false,
+      solo: false,
+      color,
+      measures: [],
+      octaveMarks: {},
+    }
+    commit({ voices: [...prev, next] })
+    setActiveVoiceId(id)
+  }, [commit])
 
-  const handleDeleteVoice = useCallback((id: string) => {
-    setVoices((prev) => {
-      if (prev.length <= 1) return prev
+  const handleDeleteVoice = useCallback(
+    (id: string) => {
+      const prev = voicesRef.current
+      if (prev.length <= 1) return
       const next = prev.filter((v) => v.id !== id)
+      commit({ voices: next })
       setActiveVoiceId((current) => (current === id ? next[0]?.id ?? null : current))
-      return next
-    })
-  }, [])
+    },
+    [commit],
+  )
 
   /** Move a voice to a new index, for drag-to-reorder in the Voices panel. */
-  const handleReorderVoices = useCallback((fromId: string, toId: string) => {
-    setVoices((prev) => {
+  const handleReorderVoices = useCallback(
+    (fromId: string, toId: string) => {
+      const prev = voicesRef.current
       const from = prev.findIndex((v) => v.id === fromId)
       const to = prev.findIndex((v) => v.id === toId)
-      if (from === -1 || to === -1 || from === to) return prev
+      if (from === -1 || to === -1 || from === to) return
       const next = [...prev]
       const [moved] = next.splice(from, 1)
       next.splice(to, 0, moved)
-      return next
-    })
+      commit({ voices: next })
+    },
+    [commit],
+  )
+
+  // ---- Note-level editing (shared by mouse click-to-place and keyboard) --
+
+  const [cursor, setCursor] = useState<CursorPos>({ measureIndex: 0, tick: 0 })
+  /**
+   * Whether the note-entry cursor should actually be drawn. Defaults to
+   * false so it doesn't appear on load looking like a stray artifact;
+   * flips on the first real edit/navigation action and flips back off when
+   * the user merely selects a different voice from the mixer panel (which
+   * is about inspecting that voice, not typing notes into it).
+   */
+  const [hasEditFocus, setHasEditFocus] = useState(false)
+  const [inputState, setInputStateRaw] = useState<NoteInputState>({
+    duration: "quarter",
+    dotted: false,
+    pendingAccidental: null,
+  })
+  const setInputState = useCallback((patch: Partial<NoteInputState>) => {
+    setInputStateRaw((s) => ({ ...s, ...patch }))
   }, [])
+
+  const activeVoice = voices.find((v) => v.id === activeVoiceId) ?? null
+  const eventAtCursor = activeVoice
+    ? findEventAtTick(activeVoice, timeSignature, cursor.measureIndex, cursor.tick)
+    : undefined
+  const tieAtCursor = eventAtCursor?.kind === "note" ? eventAtCursor.tiedToNext : false
+
+  const keySignature = KEY_SIGNATURES[musicalKey] ?? KEY_SIGNATURES["C major"]
+
+  /** The one place a note/rest event actually gets written into a voice. */
+  const placeEventAtCursor = useCallback(
+    (voiceId: string, measureIndex: number, tick: number, event: NoteEvent) => {
+      setHasEditFocus(true)
+      commit({
+        voices: voicesRef.current.map((v) =>
+          v.id === voiceId
+            ? updateVoiceMeasure(v, timeSignature, measureIndex, (m) =>
+                placeEvent(m, timeSignature, tick, event),
+              )
+            : v,
+        ),
+      })
+    },
+    [commit, timeSignature],
+  )
+
+  const deleteAtCursor = useCallback(() => {
+    if (!activeVoiceId) return
+    const voice = voicesRef.current.find((v) => v.id === activeVoiceId)
+    if (!voice) return
+    const existing = findEventAtTick(voice, timeSignature, cursor.measureIndex, cursor.tick)
+    if (!existing || existing.kind === "rest") return
+    const rest = buildRestEvent({ duration: existing.duration, dotted: existing.dotted, pendingAccidental: null })
+    placeEventAtCursor(activeVoiceId, cursor.measureIndex, cursor.tick, rest)
+  }, [activeVoiceId, timeSignature, cursor, placeEventAtCursor])
+
+  /** Mouse click-to-place: resolves a clicked staff position into a real
+   *  NoteEvent using the same shared inputState/key-signature resolution
+   *  keyboard entry uses, so both input methods agree. */
+  const placeNoteAtClick = useCallback(
+    (voiceId: string, measureIndex: number, tick: number, step: number) => {
+      const voice = voicesRef.current.find((v) => v.id === voiceId)
+      if (!voice) return
+      const measure = getMeasureOrImplicit(voice, timeSignature, measureIndex)
+      const accidental = resolveNoteAccidental(
+        measure,
+        tick,
+        step,
+        inputState.pendingAccidental,
+        keySignature,
+      )
+      const event = buildNoteEvent(step, accidental, inputState)
+      placeEventAtCursor(voiceId, measureIndex, tick, event)
+      setActiveVoiceId(voiceId)
+      setCursor({ measureIndex, tick })
+      if (inputState.pendingAccidental !== null) setInputState({ pendingAccidental: null })
+    },
+    [timeSignature, keySignature, inputState, placeEventAtCursor, setInputState],
+  )
+
+  const toggleTieAtCursor = useCallback(() => {
+    if (!activeVoiceId) return
+    const voice = voicesRef.current.find((v) => v.id === activeVoiceId)
+    if (!voice) return
+    const existing = findEventAtTick(voice, timeSignature, cursor.measureIndex, cursor.tick)
+    if (!existing || existing.kind !== "note") return
+    placeEventAtCursor(activeVoiceId, cursor.measureIndex, cursor.tick, {
+      ...existing,
+      tiedToNext: !existing.tiedToNext,
+    })
+  }, [activeVoiceId, timeSignature, cursor, placeEventAtCursor])
+
+  const moveCursor = useCallback((pos: CursorPos) => {
+    setHasEditFocus(true)
+    setCursor(pos)
+  }, [])
+  const moveCursorNext = useCallback(() => {
+    if (!activeVoice) return
+    setHasEditFocus(true)
+    setCursor((c) => nextEventBoundary(activeVoice, timeSignature, measureCount, c))
+  }, [activeVoice, timeSignature, measureCount])
+  const moveCursorPrev = useCallback(() => {
+    if (!activeVoice) return
+    setHasEditFocus(true)
+    setCursor((c) => prevEventBoundary(activeVoice, timeSignature, measureCount, c))
+  }, [activeVoice, timeSignature, measureCount])
+
+  const selectVoiceOffset = useCallback(
+    (delta: number) => {
+      setHasEditFocus(true)
+      setActiveVoiceId((current) => {
+        const list = voicesRef.current
+        const idx = list.findIndex((v) => v.id === current)
+        if (idx === -1) return current
+        const next = Math.max(0, Math.min(list.length - 1, idx + delta))
+        return list[next]?.id ?? current
+      })
+    },
+    [],
+  )
+
+  useNoteEntryKeybinds({
+    voices,
+    activeVoiceId,
+    cursor,
+    measureCount,
+    timeSignature,
+    keySignature,
+    inputState,
+    onInputStateChange: setInputState,
+    onPlaceEvent: placeEventAtCursor,
+    onDeleteAtCursor: deleteAtCursor,
+    onToggleTieAtCursor: toggleTieAtCursor,
+    onMoveCursor: moveCursor,
+    onMoveCursorNext: moveCursorNext,
+    onMoveCursorPrev: moveCursorPrev,
+    onSelectVoiceOffset: selectVoiceOffset,
+    onTogglePlay: handleTogglePlay,
+    onStop: handleStop,
+    onUndo: undo,
+    onRedo: redo,
+  })
 
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-noise">
@@ -302,11 +568,18 @@ export function StudioShell() {
               loopEnd={loopEnd}
               isLooping={isLooping}
               measureCount={measureCount}
-              beatsPerMeasure={BEATS_PER_MEASURE}
+              beatsPerMeasure={beatsPerMeasure}
+              timeSignature={timeSignature}
               canDeleteMeasure={measureCount > MIN_MEASURES}
               selectedMeasure={selectedMeasure}
               songName={songName}
               musicalKey={musicalKey}
+              cursor={cursor}
+              hasEditFocus={hasEditFocus}
+              inputState={inputState}
+              tieAtCursor={tieAtCursor}
+              canUndo={past.length > 0}
+              canRedo={future.length > 0}
               onSongNameChange={setSongName}
               onUpdateVoice={handleUpdateVoice}
               onSelectVoice={setActiveVoiceId}
@@ -316,6 +589,11 @@ export function StudioShell() {
               onSetOctaveShift={handleSetOctaveShift}
               onSeek={seek}
               onLoopChange={handleLoopChange}
+              onInputStateChange={setInputState}
+              onToggleTie={toggleTieAtCursor}
+              onUndo={undo}
+              onRedo={redo}
+              onPlaceNoteAtClick={placeNoteAtClick}
             />
           </div>
 
@@ -323,7 +601,7 @@ export function StudioShell() {
             voices={voices}
             activeVoiceId={activeVoiceId}
             isPlaying={isPlaying}
-            onSelectVoice={setActiveVoiceId}
+            onSelectVoice={handleSelectVoiceFromPanel}
             onUpdateVoice={handleUpdateVoice}
             onAddVoice={handleAddVoice}
             onDeleteVoice={handleDeleteVoice}

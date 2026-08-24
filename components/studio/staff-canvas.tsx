@@ -19,7 +19,13 @@ import {
 import { keySignatureWidth } from "@/components/studio/key-signature"
 import { NotationToolbar } from "@/components/studio/notation-toolbar"
 import { TransportBar } from "@/components/studio/transport-bar"
-import type { OctaveShift, Voice } from "@/components/studio/types"
+import type {
+  NoteInputState,
+  OctaveShift,
+  TimeSignature,
+  Voice,
+} from "@/components/studio/types"
+import type { CursorPos } from "@/components/studio/rhythm"
 import { cn } from "@/lib/utils"
 
 /**
@@ -129,10 +135,17 @@ export function StaffCanvas({
   isLooping,
   measureCount,
   beatsPerMeasure,
+  timeSignature,
   canDeleteMeasure,
   selectedMeasure,
   songName,
   musicalKey,
+  cursor,
+  hasEditFocus,
+  inputState,
+  tieAtCursor,
+  canUndo,
+  canRedo,
   onSongNameChange,
   onUpdateVoice,
   onSelectVoice,
@@ -142,6 +155,11 @@ export function StaffCanvas({
   onSetOctaveShift,
   onSeek,
   onLoopChange,
+  onInputStateChange,
+  onToggleTie,
+  onUndo,
+  onRedo,
+  onPlaceNoteAtClick,
 }: {
   voices: Voice[]
   activeVoiceId: string | null
@@ -152,10 +170,17 @@ export function StaffCanvas({
   isLooping: boolean
   measureCount: number
   beatsPerMeasure: number
+  timeSignature: TimeSignature
   canDeleteMeasure: boolean
   selectedMeasure: number | null
   songName: string
   musicalKey: string
+  cursor: CursorPos
+  hasEditFocus: boolean
+  inputState: NoteInputState
+  tieAtCursor: boolean
+  canUndo: boolean
+  canRedo: boolean
   onSongNameChange: (name: string) => void
   onUpdateVoice: (id: string, patch: Partial<Voice>) => void
   onSelectVoice: (id: string) => void
@@ -165,6 +190,16 @@ export function StaffCanvas({
   onSetOctaveShift: (shift: OctaveShift) => void
   onSeek: (beat: number) => void
   onLoopChange: (start: number, end: number) => void
+  onInputStateChange: (patch: Partial<NoteInputState>) => void
+  onToggleTie: () => void
+  onUndo: () => void
+  onRedo: () => void
+  onPlaceNoteAtClick: (
+    voiceId: string,
+    measureIndex: number,
+    tick: number,
+    step: number,
+  ) => void
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const totalNotes = measureCount * beatsPerMeasure
@@ -290,7 +325,13 @@ export function StaffCanvas({
           <Tooltip>
             <TooltipTrigger
               render={
-                <Button variant="ghost" size="icon-sm" aria-label="Undo">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Undo"
+                  disabled={!canUndo}
+                  onClick={onUndo}
+                >
                   <Undo2 />
                 </Button>
               }
@@ -300,7 +341,13 @@ export function StaffCanvas({
           <Tooltip>
             <TooltipTrigger
               render={
-                <Button variant="ghost" size="icon-sm" aria-label="Redo">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Redo"
+                  disabled={!canRedo}
+                  onClick={onRedo}
+                >
                   <Redo2 />
                 </Button>
               }
@@ -315,8 +362,12 @@ export function StaffCanvas({
           measureCount={measureCount}
           selectedMeasure={selectedMeasure}
           activeOctaveShift={activeOctaveShift}
+          inputState={inputState}
+          tieAtCursor={tieAtCursor}
           onAddMeasures={onAddMeasures}
           onSetOctaveShift={onSetOctaveShift}
+          onInputStateChange={onInputStateChange}
+          onToggleTie={onToggleTie}
         />
       </div>
 
@@ -382,16 +433,31 @@ export function StaffCanvas({
             />
           )}
 
+          {/* Measure barlines, spanning every voice as one continuous line
+              per standard engraving for a connected multi-voice system —
+              always visible, not only where the loop or selection tint
+              happens to be drawing a border. */}
+          {Array.from({ length: measureCount + 1 }, (_, i) => i).map((m) => (
+            <div
+              key={m}
+              className="pointer-events-none absolute inset-y-0 z-0 w-px bg-foreground/20"
+              style={{ left: gutterWidth + m * measureWidth }}
+            />
+          ))}
+
           {voices.map((voice) => (
             <StaffRow
               key={voice.id}
               voice={voice}
               isActive={voice.id === activeVoiceId}
-              totalNotes={totalNotes}
+              measureCount={measureCount}
               beatsPerMeasure={beatsPerMeasure}
+              timeSignature={timeSignature}
               musicalKey={musicalKey}
-              onUpdate={onUpdateVoice}
+              cursor={cursor}
+              hasEditFocus={hasEditFocus}
               onSelect={onSelectVoice}
+              onPlaceNoteAtClick={onPlaceNoteAtClick}
             />
           ))}
 

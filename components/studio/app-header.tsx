@@ -37,9 +37,12 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { MUSICAL_KEYS, TEMPO_MARKINGS } from "@/components/studio/types"
-
-const TIME_SIGNATURES = ["2/4", "3/4", "4/4", "6/8", "9/8", "12/8"]
+import {
+  MUSICAL_KEYS,
+  TEMPO_MARKINGS,
+  TIME_SIGNATURES,
+  type TimeSignature,
+} from "@/components/studio/types"
 
 export function AppHeader({
   musicalKey,
@@ -60,8 +63,8 @@ export function AppHeader({
   onKeyChange: (v: string) => void
   tempo: string
   onTempoChange: (v: string) => void
-  timeSignature: string
-  onTimeSignatureChange: (v: string) => void
+  timeSignature: TimeSignature
+  onTimeSignatureChange: (v: TimeSignature) => void
   isPlaying: boolean
   isLooping: boolean
   onTogglePlay: () => void
@@ -215,15 +218,27 @@ export function AppHeader({
 
         <div className="flex items-center gap-1.5">
           <span className="text-xs font-medium text-muted-foreground">Meter</span>
-          <Select value={timeSignature} onValueChange={(v) => v && onTimeSignatureChange(v)}>
+          <Select
+            value={
+              TIME_SIGNATURES.find(
+                (t) =>
+                  t.value.numerator === timeSignature.numerator &&
+                  t.value.denominator === timeSignature.denominator,
+              )?.label
+            }
+            onValueChange={(label) => {
+              const found = TIME_SIGNATURES.find((t) => t.label === label)
+              if (found) onTimeSignatureChange(found.value)
+            }}
+          >
             <SelectTrigger className="w-[84px]" size="sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               <SelectGroup>
                 {TIME_SIGNATURES.map((t) => (
-                  <SelectItem key={t} value={t}>
-                    {t}
+                  <SelectItem key={t.label} value={t.label}>
+                    {t.label}
                   </SelectItem>
                 ))}
               </SelectGroup>
