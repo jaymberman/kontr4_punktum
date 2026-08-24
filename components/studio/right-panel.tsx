@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
-import { Plus } from "lucide-react"
+import { PanelRightClose, PanelRightOpen, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import {
@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/tooltip"
 import { VoiceTrack } from "@/components/studio/voice-track"
 import { VOICE_COLORS, type Voice } from "@/components/studio/types"
+import { cn } from "@/lib/utils"
 
 /** A card's resting geometry, captured once when a drag begins. */
 type Slot = { id: string; top: number; height: number }
@@ -48,6 +49,7 @@ export function RightPanel({
   onReorderVoices: (fromId: string, toId: string) => void
 }) {
   const listRef = useRef<HTMLDivElement>(null)
+  const [collapsed, setCollapsed] = useState(false)
   const [drag, setDrag] = useState<DragState | null>(null)
   /** Live pointer position, so the floating card tracks the cursor 1:1. */
   const [pointer, setPointer] = useState({ x: 0, y: 0 })
@@ -195,54 +197,91 @@ export function RightPanel({
   const draggedVoice = drag ? voices.find((v) => v.id === drag.id) : null
 
   return (
-    <aside className="glass-panel flex h-64 w-full min-w-0 shrink flex-col overflow-hidden rounded-xl border border-border/70 md:h-full md:w-[340px] md:shrink-0">
-      <div className="flex items-center justify-between border-b border-border/60 px-3 py-2.5">
-        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Voices
-        </span>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-7"
-                onClick={onAddVoice}
-                disabled={!canAddVoice}
-                aria-label="Add voice"
-              >
-                <Plus />
-              </Button>
-            }
-          />
-          <TooltipContent>
-            {canAddVoice
-              ? "Add a voice"
-              : `Maximum of ${VOICE_COLORS.length} voices reached`}
-          </TooltipContent>
-        </Tooltip>
+    <aside
+      className={cn(
+        "glass-panel flex w-full min-w-0 shrink flex-col overflow-hidden rounded-xl border border-border/70 transition-[width,height] duration-200 ease-out md:h-full md:shrink-0",
+        collapsed ? "h-11 md:w-11" : "h-64 md:w-[340px]",
+      )}
+    >
+      <div
+        className={cn(
+          "flex items-center border-b border-border/60 px-3 py-2.5",
+          collapsed ? "justify-center" : "justify-between",
+        )}
+      >
+        {!collapsed && (
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Voices
+          </span>
+        )}
+        <div className="flex items-center gap-1">
+          {!collapsed && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7"
+                    onClick={onAddVoice}
+                    disabled={!canAddVoice}
+                    aria-label="Add voice"
+                  >
+                    <Plus />
+                  </Button>
+                }
+              />
+              <TooltipContent>
+                {canAddVoice
+                  ? "Add a voice"
+                  : `Maximum of ${VOICE_COLORS.length} voices reached`}
+              </TooltipContent>
+            </Tooltip>
+          )}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7"
+                  onClick={() => setCollapsed((c) => !c)}
+                  aria-label={collapsed ? "Expand voices panel" : "Collapse voices panel"}
+                  aria-pressed={collapsed}
+                >
+                  {collapsed ? <PanelRightOpen /> : <PanelRightClose />}
+                </Button>
+              }
+            />
+            <TooltipContent side={collapsed ? "right" : "bottom"}>
+              {collapsed ? "Expand voices panel" : "Collapse voices panel"}
+            </TooltipContent>
+          </Tooltip>
+        </div>
       </div>
 
-      <ScrollArea className="h-full flex-1">
-        <div ref={listRef} className="flex flex-col gap-2.5 p-3">
-          {voices.map((voice, index) => (
-            <VoiceTrack
-              key={voice.id}
-              voice={voice}
-              isActive={voice.id === activeVoiceId}
-              isPlaceholder={drag?.id === voice.id}
-              shift={shiftFor(index)}
-              animateShift={drag !== null}
-              canDelete={voices.length > 1}
-              onSelect={() => onSelectVoice(voice.id)}
-              onUpdate={(patch) => onUpdateVoice(voice.id, patch)}
-              onDelete={() => onDeleteVoice(voice.id)}
-              onDragStart={(e) => beginDrag(voice.id, index, e)}
-              onMove={(direction) => moveByOffset(voice.id, direction)}
-            />
-          ))}
-        </div>
-      </ScrollArea>
+      {!collapsed && (
+        <ScrollArea className="h-full flex-1">
+          <div ref={listRef} className="flex flex-col gap-2.5 p-3">
+            {voices.map((voice, index) => (
+              <VoiceTrack
+                key={voice.id}
+                voice={voice}
+                isActive={voice.id === activeVoiceId}
+                isPlaceholder={drag?.id === voice.id}
+                shift={shiftFor(index)}
+                animateShift={drag !== null}
+                canDelete={voices.length > 1}
+                onSelect={() => onSelectVoice(voice.id)}
+                onUpdate={(patch) => onUpdateVoice(voice.id, patch)}
+                onDelete={() => onDeleteVoice(voice.id)}
+                onDragStart={(e) => beginDrag(voice.id, index, e)}
+                onMove={(direction) => moveByOffset(voice.id, direction)}
+              />
+            ))}
+          </div>
+        </ScrollArea>
+      )}
 
       {/* The dragged card itself, floating under the cursor. Portalled to
           the body so the scroll container cannot clip it. */}

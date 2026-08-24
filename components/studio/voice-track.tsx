@@ -235,11 +235,23 @@ export function VoiceTrack({
       </Select>
 
       <div className="flex items-center gap-2.5" onClick={stop}>
-        {voice.muted || voice.volume === 0 ? (
-          <VolumeX className="size-3.5 shrink-0 text-muted-foreground" />
-        ) : (
-          <Volume2 className="size-3.5 shrink-0 text-muted-foreground" />
-        )}
+        <button
+          type="button"
+          tabIndex={isGhost ? -1 : undefined}
+          onClick={(e) => {
+            stop(e)
+            onUpdate({ muted: !voice.muted })
+          }}
+          aria-label={voice.muted ? `Unmute ${voice.name}` : `Mute ${voice.name}`}
+          aria-pressed={voice.muted}
+          className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/60"
+        >
+          {voice.muted || voice.volume === 0 ? (
+            <VolumeX className="size-3.5" />
+          ) : (
+            <Volume2 className="size-3.5" />
+          )}
+        </button>
         <Slider
           value={[voice.volume]}
           onValueChange={(value) =>
