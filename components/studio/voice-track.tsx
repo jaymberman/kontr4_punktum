@@ -31,6 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Slider } from "@/components/ui/slider"
+import { PanKnob } from "@/components/studio/pan-knob"
 import {
   CHIPTUNE_PRESETS,
   CLEF_LABEL,
@@ -208,6 +209,31 @@ export function VoiceTrack({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+
+        {/* Pushed flush to the card's right edge, mirroring the reorder
+            handle's position flush against the left edge. L/R flank the
+            knob the same way they used to flank the old pan slider. */}
+        <span className="ml-auto flex shrink-0 items-center gap-1">
+          <span
+            className="w-2.5 shrink-0 text-center text-[10px] text-muted-foreground"
+            aria-hidden
+          >
+            L
+          </span>
+          <PanKnob
+            value={voice.pan}
+            onChange={(pan) => onUpdate({ pan })}
+            color={voice.color}
+            label={`${voice.name} stereo pan`}
+            disabled={isGhost}
+          />
+          <span
+            className="w-2.5 shrink-0 text-center text-[10px] text-muted-foreground"
+            aria-hidden
+          >
+            R
+          </span>
+        </span>
       </div>
 
       <Select
@@ -265,30 +291,6 @@ export function VoiceTrack({
         />
         <span className="w-7 shrink-0 text-right font-mono text-[11px] text-muted-foreground">
           {voice.volume}
-        </span>
-      </div>
-
-      <div className="flex items-center gap-2.5" onClick={stop}>
-        <span className="w-3.5 shrink-0 text-center text-[10px] text-muted-foreground">
-          L
-        </span>
-        <Slider
-          value={[voice.pan]}
-          onValueChange={(value) =>
-            onUpdate({ pan: Array.isArray(value) ? value[0] : value })
-          }
-          min={-50}
-          max={50}
-          step={1}
-          aria-label={`${voice.name} stereo pan`}
-          /* Same voice-color treatment as the volume fader above, so both
-             sliders in a card identify the voice they belong to instead of
-             falling back to the shared primary. */
-          style={{ "--voice-color": voice.color } as React.CSSProperties}
-          className="flex-1 [&_[data-slot=slider-range]]:bg-[var(--voice-color)]"
-        />
-        <span className="w-3.5 shrink-0 text-center text-[10px] text-muted-foreground">
-          R
         </span>
       </div>
     </div>
