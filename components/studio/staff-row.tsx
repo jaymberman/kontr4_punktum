@@ -365,9 +365,6 @@ export const StaffRow = memo(function StaffRow({
     setHover(null)
   }, [])
 
-  const cursorX =
-    gutter + cursor.measureIndex * beatsPerMeasure * NOTE_WIDTH + (cursor.tick / TICKS_PER_QUARTER) * NOTE_WIDTH
-
   return (
     <div
       className={cn(
@@ -492,6 +489,14 @@ export const StaffRow = memo(function StaffRow({
             : rawStaffPos
           const y = staffPosToY(staffPos, LINE_GAP)
           const isHovered = hover?.index === i
+          /** The event at the note-entry cursor — distinct from the
+           *  accent-colored playhead line drawn separately by
+           *  staff-canvas.tsx — glows in place of a separate cursor mark. */
+          const isEditing =
+            isActive &&
+            hasEditFocus &&
+            p.measureIndex === cursor.measureIndex &&
+            p.tickOffset === cursor.tick
 
           const hollow = p.event.duration === "whole" || p.event.duration === "half"
           const hasStem = isNote && p.event.duration !== "whole"
@@ -580,17 +585,27 @@ export const StaffRow = memo(function StaffRow({
 
                 {isNote ? (
                   <div
-                    className="rounded-full border-2"
+                    className={cn("rounded-full border-2", isEditing && "animate-pulse")}
                     style={{
                       width: NOTEHEAD_SIZE,
                       height: NOTEHEAD_SIZE,
                       borderColor: voice.color,
                       backgroundColor: hollow ? "transparent" : voice.color,
                       opacity: noteOpacity,
+                      boxShadow: isEditing
+                        ? `0 0 0 5px color-mix(in srgb, ${voice.color} 35%, transparent), 0 0 10px 3px ${voice.color}`
+                        : undefined,
                     }}
                   />
                 ) : (
-                  <div style={{ color: voice.color, opacity: noteOpacity }}>
+                  <div
+                    className={cn(isEditing && "animate-pulse")}
+                    style={{
+                      color: voice.color,
+                      opacity: noteOpacity,
+                      filter: isEditing ? `drop-shadow(0 0 6px ${voice.color})` : undefined,
+                    }}
+                  >
                     <RestIcon duration={p.event.duration} className="text-2xl" />
                   </div>
                 )}
@@ -659,16 +674,6 @@ export const StaffRow = memo(function StaffRow({
           )
         })}
 
-        {/* Insertion cursor: only on the active voice's row, and only once
-            the user has actually engaged note entry on it — distinct from
-            the accent-colored playhead line drawn separately by
-            staff-canvas.tsx. */}
-        {isActive && hasEditFocus && (
-          <div
-            className="pointer-events-none absolute inset-y-0 z-20 border-l-2 border-dashed"
-            style={{ left: cursorX, borderColor: voice.color }}
-          />
-        )}
       </div>
     </div>
   )
