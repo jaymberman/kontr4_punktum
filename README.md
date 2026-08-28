@@ -16,32 +16,6 @@ Write four independent voices in standard notation, pick a NES/Game Boy/SID/FM-s
 - **Undo/redo history** scoped to actual notation edits.
 - **Collapsible voice mixer** with per-voice mute/solo, volume, and pan.
 
-![Playback with the loop region and moving playhead](public/screenshots/playback.jpg)
-
-![Per-voice mixer: instrument, volume, pan, mute/solo](public/screenshots/voice-mixer.png)
-
-## Note-entry keymap
-
-The score always has one voice "active" (highlighted) and a note-entry cursor on it. These bindings apply whenever focus isn't inside a text field:
-
-| Keys | Action |
-| --- | --- |
-| `A`–`G` | Place a note at that pitch letter (nearest octave to the previous note) |
-| `R` | Place a rest |
-| `1`–`6` | Set duration: whole, half, quarter, 8th, 16th, 32nd |
-| `.` | Toggle dotted |
-| `-` / `=` | Queue a flat / sharp for the next note |
-| `0` | Queue a natural |
-| `T` | Tie the note at the cursor to the next one |
-| `←` / `→` | Move the cursor to the previous/next note boundary |
-| `↑` / `↓` | Nudge the note at the cursor chromatically |
-| `Shift` + `↑`/`↓` | Move the note at the cursor by an octave |
-| `Delete` / `Backspace` | Clear the event at the cursor to a rest |
-| `Tab` / `Shift+Tab` | Switch the active voice |
-| `Space` | Play / pause |
-| `Escape` | Stop and return to the loop start |
-| `Cmd/Ctrl+Z`, `Cmd/Ctrl+Shift+Z` | Undo / redo |
-
 ## Getting started
 
 ### Prerequisites
